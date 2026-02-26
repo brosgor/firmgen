@@ -2,3 +2,5 @@
 img/
 keys/
 _pycache__/
+signed_packages/
+signed_outputs/

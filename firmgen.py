@@ -5,6 +5,8 @@ import os
 import base64
 import hashlib
 import json
+import shutil
+import zipfile
 from datetime import datetime
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
@@ -13,16 +15,8 @@ from cryptography.exceptions import InvalidSignature
 class FirmGen(User):
     def __init__(self, name=None, email=None, enterprise=None):
         super().__init__(name, email, enterprise)
-        self.signature_image = None
         self.private_key = None
         self.public_key = None
-        
-    def load_signature(self, signature_path):
-        """Carga la imagen de firma"""
-        if os.path.exists(signature_path):
-            self.signature_image = Image.open(signature_path)
-            return True
-        return False
 
     def generate_keys(self, private_key_path, public_key_path, password=None, key_size=2048):
         """Genera un par de llaves RSA para firma criptográfica."""
@@ -247,64 +241,6 @@ class FirmGen(User):
             print(f"Error al firmar hash criptográfico: {e}")
             return False
     
-    def add_watermark(self, input_image_path, output_image_path, 
-                      position='bottom-right', opacity=0.7, scale=0.15):
-        """
-        Agrega una marca de agua (firma) a la imagen
-        
-        Args:
-            input_image_path: Ruta de la imagen original
-            output_image_path: Ruta donde guardar la imagen firmada
-            position: Posición de la firma ('bottom-right', 'bottom-left', 'top-right', 'top-left', 'center')
-            opacity: Opacidad de la firma (0.0 a 1.0)
-            scale: Escala de la firma respecto a la imagen (0.0 a 1.0)
-        """
-        if not self.signature_image:
-            print("Error: Primero debes cargar una imagen de firma con load_signature()")
-            return False
-        
-        # Abrir imagen original
-        base_image = Image.open(input_image_path).convert('RGBA')
-        
-        # Preparar firma
-        signature = self.signature_image.convert('RGBA')
-        
-        # Redimensionar firma según escala
-        base_width, base_height = base_image.size
-        new_width = int(base_width * scale)
-        aspect_ratio = signature.size[1] / signature.size[0]
-        new_height = int(new_width * aspect_ratio)
-        signature = signature.resize((new_width, new_height), Image.Resampling.LANCZOS)
-        
-        # Ajustar opacidad
-        if opacity < 1.0:
-            alpha = signature.split()[3]
-            alpha = alpha.point(lambda p: int(p * opacity))
-            signature.putalpha(alpha)
-        
-        # Calcular posición
-        positions = {
-            'bottom-right': (base_width - new_width - 20, base_height - new_height - 20),
-            'bottom-left': (20, base_height - new_height - 20),
-            'top-right': (base_width - new_width - 20, 20),
-            'top-left': (20, 20),
-            'center': ((base_width - new_width) // 2, (base_height - new_height) // 2)
-        }
-        
-        pos = positions.get(position, positions['bottom-right'])
-        
-        # Pegar firma
-        base_image.paste(signature, pos, signature)
-        
-        # Convertir a RGB para guardar como JPEG si es necesario
-        if output_image_path.lower().endswith('.jpg') or output_image_path.lower().endswith('.jpeg'):
-            base_image = base_image.convert('RGB')
-        
-        # Guardar
-        base_image.save(output_image_path, quality=95)
-        print(f"✓ Marca de agua agregada: {output_image_path}")
-        return True
-    
     def add_metadata(self, image_path, description=None, crypto_sign=False, hash_algorithm="sha256"):
         """
         Agrega metadatos a la imagen con información del autor
@@ -451,18 +387,14 @@ class FirmGen(User):
             print(f"Error al leer metadatos: {e}")
             return False
     
-    def sign_image(self, input_image_path, output_image_path=None, 
-                   position='bottom-right', opacity=0.7, scale=0.15, 
+    def sign_image(self, input_image_path, output_image_path=None,
                    description=None, crypto_sign=False, hash_algorithm="sha256"):
         """
-        Firma una imagen completa: agrega marca de agua, metadatos y opcionalmente firma criptográfica
+        Firma una imagen completa: agrega metadatos y opcionalmente firma criptográfica
         
         Args:
             input_image_path: Ruta de la imagen original
             output_image_path: Ruta de salida (si es None, se sobrescribe la original)
-            position: Posición de la firma
-            opacity: Opacidad de la firma
-            scale: Escala de la firma
             description: Descripción adicional
             crypto_sign: Si True, firma hash criptográfico e incrusta la firma
             hash_algorithm: Algoritmo de hash (ej. sha256)
@@ -474,13 +406,7 @@ class FirmGen(User):
         print(f"Autor: {self.name}")
         print(f"Email: {self.email}")
         print(f"Empresa: {self.enterprise}\n")
-        
-        # Agregar marca de agua
-        if self.signature_image:
-            if not self.add_watermark(input_image_path, output_image_path, 
-                                     position, opacity, scale):
-                return False
-        
+
         # Agregar metadatos
         if not self.add_metadata(
             output_image_path,
@@ -533,3 +459,80 @@ class FirmGen(User):
         except Exception as e:
             print(f"Error al verificar firma criptográfica: {e}")
             return False
+
+    def export_signature_package(self, signed_image_path, output_dir="signed_packages", zip_output=True, public_key_path=None):
+        """
+        Crea un paquete de evidencia de firma separado del archivo original.
+
+        El paquete incluye:
+        - Copia de la imagen firmada
+        - manifest.json con metadatos de autor y firma
+        - public_key.pem (si se proporciona la ruta)
+        - ZIP opcional con todo el paquete
+        """
+        try:
+            if not os.path.exists(signed_image_path):
+                print(f"⚠️  No existe la imagen firmada: {signed_image_path}")
+                return None
+
+            crypto_data = self._extract_crypto_metadata(signed_image_path)
+            if not crypto_data:
+                print("⚠️  La imagen no contiene firma criptográfica incrustada")
+                return None
+
+            os.makedirs(output_dir, exist_ok=True)
+
+            image_name = os.path.basename(signed_image_path)
+            image_stem, _ = os.path.splitext(image_name)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            package_name = f"{image_stem}_firma_{timestamp}"
+            package_dir = os.path.join(output_dir, package_name)
+            os.makedirs(package_dir, exist_ok=True)
+
+            packaged_image_path = os.path.join(package_dir, image_name)
+            shutil.copy2(signed_image_path, packaged_image_path)
+
+            manifest = {
+                "created_at": datetime.now().isoformat(timespec="seconds"),
+                "generator": "FirmGen",
+                "author": {
+                    "name": self.name,
+                    "email": self.email,
+                    "enterprise": self.enterprise,
+                },
+                "signed_image": image_name,
+                "signature": crypto_data,
+            }
+
+            manifest_path = os.path.join(package_dir, "manifest.json")
+            with open(manifest_path, "w", encoding="utf-8") as file:
+                json.dump(manifest, file, ensure_ascii=False, indent=2)
+
+            if public_key_path and os.path.exists(public_key_path):
+                shutil.copy2(public_key_path, os.path.join(package_dir, "public_key.pem"))
+
+            zip_path = None
+            if zip_output:
+                zip_path = os.path.join(output_dir, f"{package_name}.zip")
+                with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zip_file:
+                    for root, _, files in os.walk(package_dir):
+                        for file_name in files:
+                            abs_path = os.path.join(root, file_name)
+                            rel_path = os.path.relpath(abs_path, package_dir)
+                            arcname = os.path.join(package_name, rel_path)
+                            zip_file.write(abs_path, arcname)
+
+            print(f"✓ Paquete de firma creado: {package_dir}")
+            if zip_path:
+                print(f"✓ ZIP de firma creado: {zip_path}")
+
+            return {
+                "package_dir": package_dir,
+                "zip_path": zip_path,
+                "manifest_path": manifest_path,
+                "packaged_image_path": packaged_image_path,
+            }
+
+        except Exception as e:
+            print(f"Error al exportar paquete de firma: {e}")
+            return None
