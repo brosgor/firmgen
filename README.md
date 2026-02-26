@@ -1,175 +1,99 @@
-# FirmGen - Sistema de Firma Digital de Imágenes
+# FirmGen - Firma de imágenes con hash criptográfico
 
-Sistema para firmar digitalmente tus imágenes con marca de agua y metadatos EXIF que certifican la autoría.
+FirmGen permite:
+- agregar marca de agua visible,
+- escribir metadatos de autoría,
+- firmar criptográficamente el hash de la imagen,
+- incrustar la firma en el mismo archivo (PNG/JPG),
+- verificar después que la imagen no fue alterada.
 
-## 🎯 Características
+## Características
 
-- ✅ **Marca de agua visible**: Agrega tu firma visual a las imágenes
-- ✅ **Metadatos EXIF**: Inserta tu información en los metadatos de la imagen
-- ✅ **Certificación de autoría**: Verifica que la imagen es tuya viendo las propiedades
-- ✅ **Personalizable**: Controla posición, tamaño y opacidad de la firma
-- ✅ **Múltiples formatos**: Compatible con JPG, PNG, etc.
+- Marca de agua visual opcional.
+- Metadatos de autor: `Author`, `Copyright`, `Description`, `Software`.
+- Firma criptográfica RSA-PSS sobre hash SHA-256.
+- Firma embebida en metadatos:
+  - PNG: campos `FG-*`.
+  - JPG/JPEG: EXIF `MakerNote` (sin sobrescribir `UserComment`).
+- Verificación de integridad y autenticidad con llave pública.
 
-## 📦 Instalación
+## Requisitos
 
 ```bash
-# Instalar las dependencias necesarias
-pip install Pillow piexif
+pip install -r requirements.txt
 ```
 
-## 🚀 Uso Básico
+Dependencias principales:
+- `pillow`
+- `piexif`
+- `cryptography`
 
-### 1. Configurar tu información
+## Uso interactivo (recomendado)
 
-```python
-from main import FirmGen
+Ejecuta:
 
-# Crear instancia con TU información
-firmgen = FirmGen(
-    name="Tu Nombre",
-    email="tu.email@ejemplo.com",
-    enterprise="Tu Empresa"
-)
-
-# Cargar tu imagen de firma
-firmgen.load_signature("img/firmation.png")
+```bash
+python main.py
 ```
 
-### 2. Firmar una imagen (marca de agua + metadatos)
+El menú interactivo permite:
+1. Firmar imagen completa (marca de agua + metadatos + firma hash).
+2. Agregar solo metadatos (con firma hash opcional).
+3. Leer metadatos.
+4. Verificar firma incrustada.
+5. Generar llaves RSA.
+
+## Flujo recomendado
+
+1. Generar llaves RSA (opción 5).
+2. Firmar la imagen (opción 1 o 2 con firma criptográfica activa).
+3. Verificar firma embebida (opción 4) usando la llave pública.
+
+## Uso por código (API)
 
 ```python
-# Firmar imagen completa
-firmgen.sign_image(
-    input_image_path="img/mi_foto.jpg",
-    output_image_path="img/mi_foto_firmada.jpg",
-    position='bottom-right',  # bottom-right, bottom-left, top-right, top-left, center
-    opacity=0.7,              # 0.0 (transparente) a 1.0 (opaco)
-    scale=0.15,               # Tamaño respecto a la imagen (0.0 a 1.0)
-    description="Foto certificada y firmada"
-)
-```
+from firmgen import FirmGen
 
-### 3. Solo agregar metadatos (sin marca visible)
+firmgen = FirmGen("Tu Nombre", "tu@email.com", "Tu Empresa")
 
-```python
-# Solo metadatos EXIF
+# 1) Crear/cargar llaves
+firmgen.generate_keys("keys/private_key.pem", "keys/public_key.pem")
+firmgen.load_private_key("keys/private_key.pem")
+firmgen.load_public_key("keys/public_key.pem")
+
+# 2) Agregar metadatos + firma criptográfica
 firmgen.add_metadata(
     "img/mi_imagen.jpg",
-    description="Imagen certificada"
+    description="Imagen certificada",
+    crypto_sign=True,
+    hash_algorithm="sha256"
 )
+
+# 3) Verificar firma
+firmgen.verify_embedded_signature("img/mi_imagen.jpg")
 ```
 
-### 4. Solo agregar marca de agua
+## Nota sobre la verificación
 
-```python
-# Solo marca visual
-firmgen.add_watermark(
-    input_image_path="img/original.jpg",
-    output_image_path="img/con_marca.jpg",
-    position='center',
-    opacity=0.5,
-    scale=0.2
-)
-```
+La verificación hace dos comprobaciones:
+1. Recalcula el hash visual de la imagen y lo compara con el hash incrustado.
+2. Valida la firma RSA-PSS con la llave pública.
 
-### 5. Leer metadatos de una imagen
+Si los píxeles cambian, la verificación falla.
 
-```python
-# Ver información de certificación
-firmgen.read_metadata("img/mi_imagen_firmada.jpg")
-```
+## Estructura del proyecto
 
-## 📋 Verificar la Firma
-
-### En Linux (interfaz gráfica)
-1. Click derecho sobre la imagen
-2. Seleccionar "Propiedades"
-3. Ir a la pestaña "Imagen" o "Metadatos"
-4. Verás: Autor, Copyright, Descripción, etc.
-
-### Con comando de terminal
-```bash
-# Instalar exiftool
-sudo apt install libimage-exiftool-perl
-
-# Ver metadatos
-exiftool imagen_firmada.jpg
-```
-
-### Con el script Python
-```python
-firmgen.read_metadata("imagen_firmada.jpg")
-```
-
-## 📁 Estructura del Proyecto
-
-```
+```text
 firmgen/
-├── main.py              # Clase principal FirmGen
-├── user.py              # Clase User con información del usuario
-├── ejemplo_uso.py       # Script de ejemplo
-├── README.md            # Este archivo
-└── img/
-    ├── firmation.png    # Tu imagen de firma
-    └── ...              # Tus imágenes a firmar
+├── firmgen.py
+├── main.py
+├── user.py
+├── requirements.txt
+└── README.md
 ```
 
-## 🔧 Parámetros Disponibles
+## Recomendaciones
 
-### Posiciones de firma
-- `'bottom-right'`: Esquina inferior derecha (predeterminado)
-- `'bottom-left'`: Esquina inferior izquierda
-- `'top-right'`: Esquina superior derecha
-- `'top-left'`: Esquina superior izquierda
-- `'center'`: Centro de la imagen
-
-### Opacidad
-- `0.0`: Completamente transparente
-- `1.0`: Completamente opaco
-- Recomendado: `0.5` a `0.8`
-
-### Escala
-- `0.0` a `1.0`: Tamaño respecto a la imagen original
-- Recomendado: `0.1` a `0.2` para firmas discretas
-
-## 💡 Ejemplos de Uso
-
-### Firma discreta para fotos profesionales
-```python
-firmgen.sign_image(
-    "foto.jpg", "foto_firmada.jpg",
-    position='bottom-right',
-    opacity=0.5,
-    scale=0.1
-)
-```
-
-### Marca de agua prominente para protección
-```python
-firmgen.sign_image(
-    "diseño.png", "diseño_protegido.png",
-    position='center',
-    opacity=0.3,
-    scale=0.4
-)
-```
-
-### Solo certificación con metadatos (sin marca visible)
-```python
-firmgen.add_metadata("documento.jpg", "Documento oficial certificado")
-```
-
-## 📝 Notas Importantes
-
-- Los metadatos EXIF permanecen en la imagen incluso si se comparte
-- La marca de agua visible es permanente (forma parte de los píxeles)
-- Puedes combinar ambos métodos para máxima protección
-- Los metadatos pueden verse con la mayoría de visores de imágenes
-
-## 🤝 Contribuciones
-
-¡Las contribuciones son bienvenidas! Siéntete libre de mejorar el código.
-
-## 📄 Licencia
-
-Este proyecto es de código abierto y está disponible para uso personal y comercial.
+- Guarda `private_key.pem` de forma segura.
+- Comparte solo `public_key.pem` para verificación.
+- Para lotes de imágenes, reutiliza el mismo par de llaves.
